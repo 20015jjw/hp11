@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#101418">
+<title>Dyson</title>
+<style>
+  :root { --bg:#f4f5f7; --card:#fff; --fg:#14181d; --mut:#6b7480; --line:#e3e6ea; --acc:#2563eb; --accbg:rgba(37,99,235,.16); --hot:#e2562b; --bad:#c62828; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#101418; --card:#1a2027; --fg:#e9edf1; --mut:#8c97a4; --line:#2a323c; --acc:#5b9bff; --accbg:rgba(91,155,255,.2); --hot:#ff8255; --bad:#ff6b6b; }
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
+  input { user-select:text; -webkit-user-select:text; }   /* typing a preset name still works */
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.4 -apple-system,system-ui,sans-serif;
+         padding:calc(16px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom)); }
+  main { max-width:460px; margin:0 auto; display:grid; gap:12px; }
+  .col { display:grid; gap:12px; align-content:start; min-width:0; }
+  #tabs button { flex:1; }
+  main[data-tab=schedule] #col-controls, main[data-tab=controls] #col-schedule { display:none; }
+  @media (min-width: 860px) {            /* desktop: controls and schedule side by side, no tabs */
+    main { max-width:960px; }
+    #tabs { display:none; }
+    #cols { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px; align-items:start; }
+    main[data-tab] #col-controls, main[data-tab] #col-schedule { display:grid; }
+    #col-schedule { position:sticky; top:16px; }
+  }
+  header { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
+  button.sm { min-height:36px; padding:0 10px; font-size:13px; min-width:86px; }
+  button.warn { border-color:var(--bad); color:var(--bad); }
+  h1 { font-size:20px; margin:0 auto 0 0; }
+  h2 { font-size:15px; margin:0 0 8px; }
+  #conn { font-size:13px; color:var(--mut); }
+  #conn.bad { color:var(--bad); }
+  #msg { color:var(--bad); font-size:14px; }
+  #msg:empty, [hidden] { display:none !important; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px; min-width:0; }
+  .fan { transition:opacity .15s; }
+  main.busy .fan, main.offline .fan { opacity:.45; pointer-events:none; }
+  .readings { display:grid; grid-template-columns:repeat(3,1fr); gap:12px 8px; text-align:center; }
+  .readings b { display:block; font-size:22px; font-variant-numeric:tabular-nums; }
+  .readings span, small, .mut { font-size:12px; color:var(--mut); }
+  small { display:block; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:44px; }
+  .row + .row { border-top:1px solid var(--line); margin-top:8px; padding-top:8px; }
+  .label { min-width:0; overflow-wrap:anywhere; }
+  button, select, input { font:inherit; color:var(--fg); }
+  button, select, input[type=text], input[type=time] { background:transparent; border:1px solid var(--line); border-radius:12px; min-height:44px; padding:0 14px; }
+  button { min-width:44px; cursor:pointer; flex:none; }
+  button.on { background:var(--acc); border-color:var(--acc); color:#fff; }
+  button.hot.on { background:var(--hot); border-color:var(--hot); }
+  button:disabled { opacity:.4; }
+  button.x { color:var(--mut); padding:0; }
+  .seg { display:flex; flex:none; }
+  .seg button { border-radius:0; margin-left:-1px; padding:0 12px; }
+  .seg button:first-child { border-radius:12px 0 0 12px; margin-left:0; }
+  .seg button:last-child { border-radius:0 12px 12px 0; }
+  .seg.sm button { min-height:36px; min-width:40px; padding:0 8px; }
+  #power { width:100%; font-size:18px; font-weight:600; min-height:56px; }
+  .step { display:flex; align-items:center; gap:10px; flex:none; }
+  .step b { min-width:52px; text-align:center; font-size:18px; font-variant-numeric:tabular-nums; }
+  input[type=range] { width:100%; accent-color:var(--acc); height:32px; }
+  input[type=text] { flex:1 1 150px; min-width:0; }
+  select { flex:1 1 150px; min-width:0; }
+  /* Only the grips over the knobs take touches; anywhere else on the dial scrolls the page. */
+  #dialwrap { position:relative; width:100%; max-width:300px; aspect-ratio:1; margin:4px auto 0;
+              user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
+  .grip { position:absolute; width:19.3%; aspect-ratio:1; border-radius:50%; transform:translate(-50%,-50%);
+          touch-action:none; cursor:grab; }
+  #dial { display:block; width:100%; height:100%; pointer-events:none; user-select:none; -webkit-user-select:none; }
+  #dial .track { fill:none; stroke:var(--line); stroke-width:2; }
+  #dial .tick { stroke:var(--line); stroke-width:2; }
+  #dial text { fill:var(--mut); font-size:11px; text-anchor:middle; }
+  #dial .sector { fill:var(--accbg); }
+  #dial .beam { stroke:var(--acc); stroke-width:4; stroke-linecap:round; }
+  #dial .knob { fill:var(--acc); stroke:var(--card); stroke-width:3; cursor:grab; }
+  #dial .knob.active { stroke:var(--fg); }
+  #dial .actual { stroke:var(--mut); stroke-width:2; stroke-dasharray:4 5; }
+  #dial .body { fill:var(--card); stroke:var(--fg); stroke-width:2; }
+  #dial .loop { fill:var(--fg); }
+  #dirtxt { text-align:center; margin:6px 0 10px; font-size:14px; min-height:20px; }
+  .days { display:flex; gap:4px; flex-wrap:wrap; }
+  .days button { min-width:40px; min-height:40px; padding:0; border-radius:50%; }
+  .form { display:grid; gap:10px; margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }
+  .form .line { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .form .line > button { flex:1 0 auto; }
+</style>
+</head>
+<body>
+<main id="main" class="offline" data-tab="controls">
+  <header>
+    <h1>Dyson</h1><span id="conn">connecting…</span>
+    <button id="kill" class="sm" hidden>Disconnect</button>
+    <div class="seg sm" id="unit"><button data-u="F">°F</button><button data-u="C">°C</button></div>
+  </header>
+  <div id="msg" role="alert"></div>
+  <div class="card row" id="paused" hidden>
+    <div class="label">Disconnected from the fan <small>Nothing is being sent, schedules included.</small></div>
+    <button id="reconnect" class="on">Reconnect</button>
+  </div>
+  <nav class="seg" id="tabs" aria-label="Sections"><button data-t="controls">Controls</button><button data-t="schedule">Presets &amp; schedule</button></nav>
+
+  <div id="cols">
+  <div class="col" id="col-controls">
+
+  <section class="card readings">
+    <div><b id="e-temp_c">–</b><span id="e-unit">°F</span></div>
+    <div><b id="e-humidity">–</b><span>% humidity</span></div>
+    <div><b id="e-pm25">–</b><span>PM2.5</span></div>
+    <div><b id="e-pm10">–</b><span>PM10</span></div>
+    <div><b id="e-voc">–</b><span>VOC</span></div>
+    <div><b id="e-no2">–</b><span>NO₂</span></div>
+  </section>
+
+  <button id="power" class="fan">Power</button>
+
+  <section class="card fan">
+    <div class="row">
+      <div class="label">Fan speed <small id="speedtxt"></small></div>
+      <button id="auto">Auto</button>
+    </div>
+    <input id="speed" type="range" min="1" max="10" step="1" aria-label="Fan speed">
+  </section>
+
+  <section class="card fan">
+    <div class="row">
+      <div class="label">Heat <small id="heattxt"></small></div>
+      <button id="heat" class="hot">Heat</button>
+    </div>
+    <div class="row">
+      <div class="label">Target</div>
+      <div class="step"><button id="t-down" aria-label="Cooler">−</button><b id="target">–</b><button id="t-up" aria-label="Warmer">+</button></div>
+    </div>
+  </section>
+
+  <section class="card fan">
+    <div class="row">
+      <div class="label">Direction <small>seen from above; left and right are the machine's own</small></div>
+      <div class="seg sm" id="mode"><button data-m="fixed">Fixed</button><button data-m="sweep">Sweep</button></div>
+    </div>
+    <div id="dialwrap">
+    <svg id="dial" viewBox="-135 -135 270 270" role="img" aria-label="Direction dial, seen from above">
+      <circle class="track" r="108"/>
+      <g id="ticks"></g>
+      <text y="-120">front</text><text x="-121" y="4">left</text><text x="121" y="4">right</text>
+      <path id="sector" class="sector"/>
+      <line id="act-a" class="actual"/><line id="act-b" class="actual"/>
+      <line id="beam-a" class="beam"/><line id="beam-b" class="beam"/>
+      <circle class="body" r="24"/>
+      <rect id="loop" class="loop" x="-30" y="-5" width="60" height="10" rx="5"/>
+      <circle id="knob-a" class="knob" r="13"/><circle id="knob-b" class="knob" r="13"/>
+    </svg>
+    <div class="grip" id="grip-a"></div><div class="grip" id="grip-b"></div>
+    </div>
+    <div id="dirtxt"></div>
+    <div class="row">
+      <div class="step"><button id="n-down" aria-label="One degree toward the machine's left">‹ 1°</button><button id="n-up" aria-label="One degree toward the machine's right">1° ›</button></div>
+      <div class="step" id="oscwrap"><span class="mut">Oscillate</span><button id="osc">Off</button></div>
+    </div>
+  </section>
+
+  <section class="card fan">
+    <div class="row"><div class="label">Night mode <small>dims the display, caps fan speed</small></div><button data-k="night_mode">Off</button></div>
+    <div class="row" id="brirow"><div class="label">Display brightness</div><div class="seg sm" id="bri"></div></div>
+    <div class="row"><div class="label">Front airflow <small>off = diffused out the back</small></div><button data-k="front_airflow">Off</button></div>
+  </section>
+
+
+  </div>
+  <div class="col" id="col-schedule">
+  <section class="card">
+    <h2>Presets</h2>
+    <div id="presets"></div>
+    <div class="form"><div class="line">
+      <input id="p-name" type="text" maxlength="30" placeholder="Name, e.g. Evening" aria-label="Preset name">
+      <button id="p-save">Remember current</button>
+    </div></div>
+  </section>
+
+  <section class="card">
+    <h2>Schedule</h2>
+    <div id="schedules"></div>
+    <div class="form">
+      <div class="line"><input id="s-time" type="time" value="07:00" aria-label="Time"><select id="s-action" aria-label="Action"></select></div>
+      <div class="days" id="s-days"></div>
+      <div class="line"><button id="s-add">Add to schedule</button><span class="mut" id="clock"></span></div>
+    </div>
+  </section>
+
+  </div>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DEBOUNCE_MS = 2000;                    // wait this long after the last dial move before sending
+let s = null, cfg = {presets: {}, schedules: []};
+let holdUntil = 0, dragging = false, target = null, targetTimer, msgTimer;
+let dir = {mode: 'fixed', a: 180, b: 180}, dirDirty = false, dirTimer, active = 'a', grab = null;
+let useF = true;
+try { useF = (localStorage.getItem('unit') ?? (navigator.language === 'en-US' ? 'F' : 'C')) === 'F'; } catch {}
+const toUnit = c => useF ? c * 9 / 5 + 32 : c, toC = v => useF ? (v - 32) * 5 / 9 : v;
+const fmtT = c => Math.round(toUnit(c)) + '°';
+
+function el(tag, props = {}, ...kids) {
+  const e = Object.assign(document.createElement(tag), props);
+  e.append(...kids); return e;
+}
+function say(text) { $('msg').textContent = text; clearTimeout(msgTimer); msgTimer = setTimeout(() => $('msg').textContent = '', 5000); }
+async function api(method, path, body) {
+  const r = await fetch(path, {method, headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || 'request failed (' + r.status + ')');
+  return j;
+}
+
+// ---- tabs (phone only; on a wide screen both columns show) ------------------
+function showTab(t) {
+  $('main').dataset.tab = t; try { localStorage.setItem('tab', t); } catch {}
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+}
+document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => showTab(b.dataset.t));
+{ let t = 'controls'; try { t = localStorage.getItem('tab') === 'schedule' ? 'schedule' : 'controls'; } catch {} showTab(location.hash === '#schedule' ? 'schedule' : t); }
+
+// ---- fan state ------------------------------------------------------------
+async function load() {
+  try {
+    const fresh = await api('GET', 'api/state');
+    if (Date.now() > holdUntil || !s) { s = fresh; render(); }
+  } catch { $('conn').textContent = 'app unreachable'; $('conn').className = 'bad'; $('main').classList.add('offline'); }
+}
+async function set(changes) {
+  if (!s) return;
+  holdUntil = Date.now() + 1500;             // don't let a stale poll undo the tap
+  const local = {...changes};
+  if ('speed' in local) { local.auto = local.speed === 'auto'; if (local.auto) delete local.speed; else local.power = true; }
+  if ('aim' in local) { Object.assign(local, {sweep_low: local.aim, sweep_high: local.aim, oscillation: false}); s.adjusting = true; delete local.aim; }
+  if ('sweep' in local) { Object.assign(local, {sweep_low: local.sweep[0], sweep_high: local.sweep[1], oscillation: true}); s.adjusting = true; delete local.sweep; }
+  Object.assign(s.state, local); render();
+  try { await api('POST', 'api/set', changes); }
+  catch (e) { say(e.message); s.adjusting = false; holdUntil = 0; load(); }
+}
+
+// ---- direction dial ---------------------------------------------------------
+// Seen from above with the front at the top: angles above centre turn the head
+// to the machine's right, which is clockwise and to the right on screen.
+const clampA = a => Math.min(355, Math.max(5, Math.round(a)));
+const pt = (a, r) => { const t = (a - s.center) * Math.PI / 180; return [r * Math.sin(t), -r * Math.cos(t)]; };
+function off(a) { const d = Math.round(a - s.center); return d === 0 ? 'straight ahead' : Math.abs(d) + '° ' + (d < 0 ? 'left' : 'right'); }
+function line(id, a, r0, r1) { const [x1, y1] = pt(a, r0), [x2, y2] = pt(a, r1); const l = $(id); l.setAttribute('x1', x1); l.setAttribute('y1', y1); l.setAttribute('x2', x2); l.setAttribute('y2', y2); }
+function drawDial() {
+  if (!s) return;
+  const sweep = dir.mode === 'sweep', st = s.state;
+  for (const h of ['a', 'b']) {
+    const show = h === 'a' || sweep;
+    $('beam-' + h).style.display = $('knob-' + h).style.display = $('grip-' + h).style.display = show ? '' : 'none';
+    if (!show) continue;
+    line('beam-' + h, dir[h], 24, 108);
+    const [x, y] = pt(dir[h], 108); $('knob-' + h).setAttribute('cx', x); $('knob-' + h).setAttribute('cy', y);
+    $('grip-' + h).style.left = (135 + x) / 2.7 + '%'; $('grip-' + h).style.top = (135 + y) / 2.7 + '%';
+    $('knob-' + h).classList.toggle('active', sweep && active === h);
+  }
+  const sec = $('sector'); sec.style.display = sweep ? '' : 'none';
+  if (sweep) {
+    const [x1, y1] = pt(dir.a, 108), [x2, y2] = pt(dir.b, 108);
+    sec.setAttribute('d', `M0 0L${x1} ${y1}A108 108 0 ${dir.b - dir.a > 180 ? 1 : 0} 1 ${x2} ${y2}Z`);
+  }
+  $('loop').setAttribute('transform', `rotate(${(sweep ? (dir.a + dir.b) / 2 : dir.a) - s.center})`);
+  // dashed lines: where the fan itself is currently set, when that differs from the dial
+  const lo = st.sweep_low, hi = st.sweep_high;
+  const differs = lo != null && (lo !== dir.a || hi !== (sweep ? dir.b : dir.a));
+  $('act-a').style.display = differs ? '' : 'none'; $('act-b').style.display = differs && lo !== hi ? '' : 'none';
+  if (differs) { line('act-a', lo, 24, 108); line('act-b', hi, 24, 108); }
+  let txt = sweep ? `Sweep from ${off(dir.a)} to ${off(dir.b)} (${dir.b - dir.a}° wide)` : 'Pointing ' + off(dir.a);
+  if (dirDirty) txt += ' · applying shortly…'; else if (s.adjusting) txt += ' · adjusting…';
+  $('dirtxt').textContent = txt;
+  document.querySelectorAll('#mode button').forEach(b => b.classList.toggle('on', b.dataset.m === dir.mode));
+  $('oscwrap').hidden = !sweep;
+  const osc = sweep && !!st.oscillation && !dirDirty;
+  $('osc').classList.toggle('on', osc); $('osc').textContent = osc ? 'On' : 'Off';
+}
+function dirChanged() {                      // any edit: redraw now, send once things go quiet
+  dirDirty = true; drawDial();
+  clearTimeout(dirTimer);
+  dirTimer = setTimeout(async () => {
+    if (grab) return dirChanged();           // still holding the knob: keep waiting
+    const st = s.state, same = dir.a === st.sweep_low && (dir.mode === 'sweep' ? dir.b : dir.a) === st.sweep_high;
+    if (same) { dirDirty = false; return drawDial(); }   // back where it started: send nothing
+    await set(dir.mode === 'sweep' ? {sweep: [dir.a, dir.b]} : {aim: dir.a});
+    dirDirty = false; drawDial();
+  }, DEBOUNCE_MS);
+}
+// Haptic ticks while dragging, on browsers with the Vibration API (Android; not iOS):
+// a light one every 5 degrees, a firmer one on a magnet.
+function buzz(ms) { if (navigator.vibrate) navigator.vibrate(ms); }
+let lastTick = null, lastAngle = null;
+function moveHandle(h, angle, dragging) {
+  angle = clampA(angle);
+  if (dragging) {
+    // Magnets: straight ahead, and wherever the fan is set right now.
+    const magnets = [s.center, s.state.sweep_low, s.state.sweep_high].filter(m => m != null);
+    const near = magnets.filter(m => Math.abs(angle - m) <= 3).sort((x, y) => Math.abs(angle - x) - Math.abs(angle - y))[0];
+    if (near != null) angle = near;
+    const step = Math.round((angle - s.center) / 5);
+    if (near != null && angle !== lastAngle && lastAngle !== null) buzz(18);
+    else if (step !== lastTick && lastTick !== null) buzz(6);
+    lastTick = step; lastAngle = angle;
+  }
+  if (dir.mode === 'fixed') dir.a = dir.b = angle;
+  else if (h === 'a') dir.a = Math.min(angle, dir.b - 30);
+  else dir.b = Math.max(angle, dir.a + 30);
+  dirChanged();
+}
+function pointerXY(ev) {                      // position relative to the dial's centre, in dial units
+  const r = $('dialwrap').getBoundingClientRect(), k = 270 / r.width;
+  return [(ev.clientX - (r.left + r.width / 2)) * k, (ev.clientY - (r.top + r.height / 2)) * k];
+}
+function pointerAngle(ev) { const [x, y] = pointerXY(ev); return s.center + Math.atan2(x, -y) * 180 / Math.PI; }
+let grabOffset = 0;                          // knob angle minus finger angle at touch-down, so it doesn't jump
+for (const h of ['a', 'b']) {
+  const g = $('grip-' + h);
+  g.addEventListener('touchstart', ev => ev.preventDefault(), {passive: false});   // no long-press magnifier
+  g.addEventListener('pointerdown', ev => {
+    if (!s) return;
+    grab = active = h; lastTick = lastAngle = null; grabOffset = dir[h] - pointerAngle(ev);
+    g.setPointerCapture(ev.pointerId); drawDial(); ev.preventDefault();
+  });
+  g.addEventListener('pointermove', ev => { if (grab === h) moveHandle(h, pointerAngle(ev) + grabOffset, true); });
+  for (const t of ['pointerup', 'pointercancel']) g.addEventListener(t, () => { grab = null; });
+}
+document.querySelectorAll('#mode button').forEach(b => b.onclick = () => {
+  if (!s || b.dataset.m === dir.mode) return;
+  if (b.dataset.m === 'sweep') { const mid = Math.min(310, Math.max(50, dir.a)); dir = {mode: 'sweep', a: mid - 45, b: mid + 45}; }
+  else { const mid = clampA((dir.a + dir.b) / 2); dir = {mode: 'fixed', a: mid, b: mid}; active = 'a'; }
+  dirChanged();
+});
+$('n-down').onclick = () => s && moveHandle(active, dir[active] - 1);
+$('n-up').onclick = () => s && moveHandle(active, dir[active] + 1);
+$('osc').onclick = () => set({oscillation: !s.state.oscillation});
+{ let t = ''; for (let d = -150; d <= 150; d += 30) { const k = d * Math.PI / 180, c = Math.sin(k), n = -Math.cos(k); t += `<line class="tick" x1="${100 * c}" y1="${100 * n}" x2="${108 * c}" y2="${108 * n}"/>`; } $('ticks').innerHTML = t; }
+
+// ---- render -----------------------------------------------------------------
+function render() {
+  const st = s.state, on = !!st.power;
+  $('main').classList.toggle('offline', !s.connected);
+  $('main').classList.toggle('busy', !!s.adjusting);
+  $('paused').hidden = !s.paused; $('kill').hidden = !!s.paused;
+  $('conn').textContent = s.paused ? 'disconnected' : !s.connected ? (s.error || 'fan offline') : s.adjusting ? 'adjusting…' : 'connected';
+  $('conn').className = s.connected ? '' : 'bad';
+  for (const k in s.env) { const e = $('e-' + k); if (!e) continue;
+    const v = s.env[k]; e.parentElement.hidden = v == null && k !== 'temp_c';   // hide sensors this model lacks
+    e.textContent = v == null ? '–' : k === 'temp_c' ? toUnit(v).toFixed(useF ? 0 : 1) : v; }
+  $('e-unit').textContent = useF ? '°F' : '°C';
+  document.querySelectorAll('#unit button').forEach(b => b.classList.toggle('on', (b.dataset.u === 'F') === useF));
+  $('power').textContent = st.power == null ? 'Power' : on ? 'On' : 'Off';
+  $('power').classList.toggle('on', on);
+  $('auto').classList.toggle('on', !!st.auto);
+  $('speedtxt').textContent = st.auto ? 'auto' : st.speed ? 'level ' + st.speed : '';
+  if (!dragging && st.speed) $('speed').value = st.speed;
+  $('heat').classList.toggle('on', !!st.heat);
+  $('heat').textContent = st.heat ? 'On' : 'Off';
+  $('heattxt').textContent = st.heat ? (st.heating_now ? 'heating' : 'at temperature') : s.heat_guard_s ? 'can restart in ' + s.heat_guard_s + 's' : '';
+  if (target == null) $('target').textContent = st.target_c != null ? fmtT(st.target_c) : '–';
+  document.querySelectorAll('[data-k]').forEach(b => { const v = !!st[b.dataset.k]; b.closest('.row').hidden = st[b.dataset.k] == null; b.classList.toggle('on', v); b.textContent = v ? 'On' : 'Off'; });
+  $('brirow').hidden = st.brightness == null;
+  if (!$('bri').children.length) for (const n of s.brightness_levels || [])
+    $('bri').append(el('button', {textContent: n, onclick: () => set({brightness: n})}));
+  [...$('bri').children].forEach(b => b.classList.toggle('on', +b.textContent === st.brightness));
+  if (!dirDirty && st.sweep_low != null) dir = {mode: st.sweep_low === st.sweep_high ? 'fixed' : 'sweep', a: st.sweep_low, b: st.sweep_high};
+  drawDial();
+  $('clock').textContent = s.server_time ? 'App clock: ' + s.server_time : '';
+  renderCfg();
+}
+async function link(connected) {
+  try { await api('POST', 'api/connection', {connected}); } catch (e) { say(e.message); }
+  holdUntil = 0; load();
+}
+// Disconnect needs a second tap within a few seconds, so a stray touch can't cut the link.
+let killArmed;
+function disarm() { clearTimeout(killArmed); killArmed = null; $('kill').textContent = 'Disconnect'; $('kill').classList.remove('warn'); }
+$('kill').onclick = () => {
+  if (killArmed) { disarm(); return link(false); }
+  $('kill').textContent = 'Confirm?'; $('kill').classList.add('warn');
+  killArmed = setTimeout(disarm, 4000);
+};
+$('reconnect').onclick = () => link(true);
+$('power').onclick = () => set({power: !s.state.power});
+$('auto').onclick = () => set(s.state.auto ? {speed: s.state.speed || 4} : {speed: 'auto'});
+$('heat').onclick = () => set({heat: !s.state.heat});
+$('speed').oninput = () => { dragging = true; $('speedtxt').textContent = 'level ' + $('speed').value; };
+$('speed').onchange = () => { dragging = false; set({speed: +$('speed').value}); };
+document.querySelectorAll('[data-k]').forEach(b => b.onclick = () => set({[b.dataset.k]: !s.state[b.dataset.k]}));
+function nudge(d) {
+  const [lo, hi] = useF ? [34, 99] : [1, 37];
+  target = Math.min(hi, Math.max(lo, (target ?? Math.round(toUnit(s.state.target_c ?? 21))) + d));
+  $('target').textContent = target + '°';
+  clearTimeout(targetTimer);
+  targetTimer = setTimeout(() => { const t = +toC(target).toFixed(2); target = null; set({target_c: t}); }, 600);
+}
+$('t-down').onclick = () => nudge(-1);
+$('t-up').onclick = () => nudge(1);
+document.querySelectorAll('#unit button').forEach(b => b.onclick = () => {
+  useF = b.dataset.u === 'F'; try { localStorage.setItem('unit', b.dataset.u); } catch {}
+  target = null; if (s) render();
+});
+
+// ---- presets and schedule ---------------------------------------------------
+async function loadCfg() { try { cfg = await api('GET', 'api/config'); renderCfg(); } catch {} }
+async function change(method, path, body) { try { cfg = await api(method, path, body); renderCfg(); return true; } catch (e) { say(e.message); return false; } }
+function describe(p) {
+  if (p.power === false) return 'Off';
+  const out = [p.auto ? 'Auto speed' : 'Speed ' + p.speed, p.heat ? 'Heat ' + fmtT(p.target_c) : 'Fan only'];
+  if (p.sweep_low != null && s) out.push(p.sweep_low === p.sweep_high ? off(p.sweep_low)
+    : `${off(p.sweep_low)} to ${off(p.sweep_high)}${p.oscillation ? '' : ' (parked)'}`);
+  if (p.night_mode) out.push('Night mode');
+  if (p.brightness != null) out.push('Display ' + p.brightness);
+  return out.join(' · ');
+}
+function dayText(d) {
+  const k = d.join('');
+  return k === '0123456' ? 'Every day' : k === '01234' ? 'Weekdays' : k === '56' ? 'Weekends' : d.map(i => DAYS[i]).join(' ');
+}
+const clockText = t => new Date('1970-01-01T' + t).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+function renderCfg() {
+  const names = Object.keys(cfg.presets);
+  $('presets').replaceChildren(...(names.length ? names.map(n => el('div', {className: 'row'},
+    el('div', {className: 'label'}, n, el('small', {textContent: describe(cfg.presets[n])})),
+    el('div', {className: 'step'},
+      el('button', {textContent: 'Apply', onclick: async () => { try { await api('POST', `api/presets/${encodeURIComponent(n)}/apply`); holdUntil = 0; load(); } catch (e) { say(e.message); } }}),
+      el('button', {className: 'x', textContent: '✕', ariaLabel: 'Delete preset ' + n, onclick: () => confirm(`Delete preset "${n}" and any schedule that uses it?`) && change('DELETE', 'api/presets/' + encodeURIComponent(n))}))))
+    : [el('div', {className: 'mut', textContent: 'None yet. Set the fan how you like it, then remember it below.'})]));
+  $('schedules').replaceChildren(...(cfg.schedules.length ? cfg.schedules.map(e => el('div', {className: 'row'},
+    el('div', {className: 'label'},
+      `${clockText(e.time)} · ${e.action === 'off' ? 'Turn off' : e.action === 'on' ? 'Turn on' : e.preset}`,
+      el('small', {textContent: dayText(e.days) + (e.last_result ? ' · last: ' + e.last_result : '')})),
+    el('div', {className: 'step'},
+      el('button', {className: e.enabled ? 'on' : '', textContent: e.enabled ? 'On' : 'Off', onclick: () => change('POST', `api/schedules/${e.id}/enabled`, {enabled: !e.enabled})}),
+      el('button', {className: 'x', textContent: '✕', ariaLabel: 'Delete schedule', onclick: () => change('DELETE', 'api/schedules/' + e.id)}))))
+    : [el('div', {className: 'mut', textContent: 'Nothing scheduled.'})]));
+  const sel = $('s-action'), keep = sel.value;
+  sel.replaceChildren(el('option', {value: 'off', textContent: 'Turn off'}), el('option', {value: 'on', textContent: 'Turn on (previous settings)'}),
+    ...names.map(n => el('option', {value: 'preset:' + n, textContent: 'Preset: ' + n})));
+  if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
+}
+DAYS.forEach((d, i) => $('s-days').append(el('button', {textContent: d[0], className: i < 5 ? 'on' : '', ariaLabel: d, onclick: ev => ev.currentTarget.classList.toggle('on')})));
+$('p-save').onclick = async () => { if (await change('POST', 'api/presets', {name: $('p-name').value})) $('p-name').value = ''; };
+$('s-add').onclick = () => {
+  const v = $('s-action').value, days = [...$('s-days').children].flatMap((b, i) => b.classList.contains('on') ? [i] : []);
+  change('POST', 'api/schedules', {time: $('s-time').value, days, action: v.startsWith('preset:') ? 'preset' : v,
+    preset: v.startsWith('preset:') ? v.slice(7) : null});
+};
+
+load(); loadCfg(); setInterval(load, 2000); setInterval(loadCfg, 30000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { load(); loadCfg(); } });
+</script>
+</body>
+</html>
