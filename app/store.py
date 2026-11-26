@@ -5,7 +5,7 @@ import re
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 RUN_WINDOW_MINUTES = 5  # keep retrying a missed/refused schedule for this long
@@ -18,8 +18,20 @@ class Store:
         self._lock = threading.RLock()
         try:
             self.data = json.loads(self.path.read_text())
-        except (FileNotFoundError, ValueError):
+            if not isinstance(self.data, dict):
+                raise ValueError("not a JSON object")
+        except FileNotFoundError:
             self.data = {}
+        except (OSError, ValueError) as e:
+            # Unreadable store: keep the bad file, and come up disconnected, since
+            # we no longer know whether the kill switch was on.
+            bad = self.path.with_name(f"{self.path.name}.corrupt-{int(time.time())}")
+            try:
+                os.replace(self.path, bad)
+            except OSError:
+                bad = None
+            print(f"hp11: {self.path} unreadable ({e}); kept as {bad}; starting disconnected", flush=True)
+            self.data = {"paused": True}
         self.data.setdefault("presets", {})
         self.data.setdefault("schedules", [])
         self.data.setdefault("paused", False)  # kill switch, kept across restarts
@@ -44,6 +56,8 @@ class Store:
         name = (name or "").strip()
         if not 1 <= len(name) <= 30:
             raise ValueError("preset name must be 1-30 characters")
+        if not re.fullmatch(r"[\w][\w .,'&()+-]*", name):  # it becomes a URL path segment
+            raise ValueError("preset name may use letters, digits, spaces and . , ' & ( ) + -")
         with self._lock:
             self.data["presets"][name] = settings
             self._save()
@@ -73,7 +87,8 @@ class Store:
                 raise ValueError("unknown preset")
             entry = {"id": uuid.uuid4().hex[:8], "time": time_, "days": sorted(set(days)),
                      "action": action, "preset": preset if action == "preset" else None,
-                     "enabled": True, "last_run": None, "last_result": None}
+                     "enabled": True, "last_run": None, "last_result": None,
+                     "since": datetime.now().isoformat()}
             self.data["schedules"].append(entry)
             self.data["schedules"].sort(key=lambda s: s["time"])
             self._save()
@@ -83,6 +98,10 @@ class Store:
         with self._lock:
             for s in self.data["schedules"]:
                 if s["id"] == sid:
+                    if fields.get("enabled") and not s.get("enabled"):
+                        fields["since"] = datetime.now().isoformat()  # don't fire for a time already past
+                    if all(s.get(k) == v for k, v in fields.items()):
+                        return s  # nothing to write
                     s.update(fields)
                     self._save()
                     return s
@@ -98,13 +117,27 @@ class Store:
 
 
 def due(entry, now):
-    """Is this schedule inside its run window right now and not yet run today?"""
-    if not entry.get("enabled") or now.weekday() not in entry["days"]:
-        return False
+    """The scheduled start this entry should run for right now, or None.
+
+    An entry is due from its time until RUN_WINDOW_MINUTES later (also across
+    midnight), once per start, and never for a start before it was created or
+    last re-enabled.
+    """
+    if not entry.get("enabled"):
+        return None
     h, m = map(int, entry["time"].split(":"))
-    start = now.replace(hour=h, minute=m, second=0, microsecond=0)
-    late = (now - start).total_seconds()
-    return 0 <= late < RUN_WINDOW_MINUTES * 60 and entry.get("last_run") != start.isoformat()
+    for back in (0, 1):
+        start = (now - timedelta(days=back)).replace(hour=h, minute=m, second=0, microsecond=0)
+        if start.weekday() not in entry["days"]:
+            continue
+        if not 0 <= (now - start).total_seconds() < RUN_WINDOW_MINUTES * 60:
+            continue
+        if entry.get("last_run") == start.isoformat():
+            continue
+        if entry.get("since") and start < datetime.fromisoformat(entry["since"]):
+            continue
+        return start
+    return None
 
 
 def run_entry(fan, store, entry):
@@ -116,27 +149,28 @@ def run_entry(fan, store, entry):
     return fan.apply_settings(store.preset(entry["preset"]))
 
 
+def _tick(fan, store, now):
+    for entry in store.view()["schedules"]:
+        start = due(entry, now)
+        if start is None:
+            if (entry.get("last_result") or "").startswith("retrying"):  # window closed unrun
+                store.update_schedule(entry["id"], last_result="skipped: " + entry["last_result"][10:])
+            continue
+        try:
+            run_entry(fan, store, entry)
+            result = "ok"
+        except (ConnectionError, RuntimeError) as e:  # offline or heat guard: retry next tick
+            store.update_schedule(entry["id"], last_result=f"retrying: {e}")
+            continue
+        except Exception as e:  # bad preset etc.: don't retry
+            result = f"failed: {e}"
+        store.update_schedule(entry["id"], last_run=start.isoformat(),
+                              last_result=f"{result} at {now:%a %H:%M}")
+
+
 def scheduler(fan, store, stop, tick=15):
     while not stop.wait(tick):
-        now = datetime.now()
-        for entry in store.view()["schedules"]:
-            if not due(entry, now):
-                continue
-            h, m = map(int, entry["time"].split(":"))
-            stamp = now.replace(hour=h, minute=m, second=0, microsecond=0).isoformat()
-            try:
-                run_entry(fan, store, entry)
-                result = "ok"
-            except (ConnectionError, RuntimeError) as e:  # offline or heat guard: retry next tick
-                try:
-                    store.update_schedule(entry["id"], last_result=f"retrying: {e}")
-                except KeyError:
-                    pass
-                continue
-            except Exception as e:  # bad preset etc.: don't retry
-                result = f"failed: {e}"
-            try:
-                store.update_schedule(entry["id"], last_run=stamp,
-                                      last_result=f"{result} at {now:%a %H:%M}")
-            except KeyError:
-                pass
+        try:
+            _tick(fan, store, datetime.now())
+        except Exception as e:  # never let one bad tick (full disk, deleted entry) end the thread
+            print(f"hp11: scheduler tick failed: {e!r}", flush=True)
