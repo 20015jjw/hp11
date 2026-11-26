@@ -160,6 +160,8 @@ def delete_schedule(sid: str):
 
 @app.post("/api/refresh")
 def refresh():
+    if fan.paused or not fan.connected:
+        raise HTTPException(503, "not connected to the fan")
     fan.refresh()
     return {"ok": True}
 

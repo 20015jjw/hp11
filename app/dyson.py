@@ -183,8 +183,13 @@ class Dyson:
 
     # -- commands -----------------------------------------------------------
     def _send(self, payload):
+        # QoS 0 and only while connected: a command must never be queued and
+        # delivered later (e.g. heat-on arriving after the fan rejoins Wi-Fi).
+        if self.paused or not self.connected:
+            return False
         payload["time"] = _now()
-        self._c.publish(f"{self.root}/command", json.dumps(payload), qos=1)
+        self._c.publish(f"{self.root}/command", json.dumps(payload), qos=0)
+        return True
 
     def refresh(self):
         self._send({"msg": "REQUEST-CURRENT-STATE"})
@@ -215,7 +220,8 @@ class Dyson:
                 if data["osal"] == data["osau"]:
                     expected["oson"] = "OFF"  # a fixed aim ends with the head parked
                 self._pending = (expected, time.monotonic() + ADJUST_TIMEOUT_SECONDS)
-        self._send({"msg": "STATE-SET", "mode-reason": "LAPP", "data": data})
+        if not self._send({"msg": "STATE-SET", "mode-reason": "LAPP", "data": data}):
+            raise ConnectionError("not connected to the fan")
         return data
 
     def adjusting(self):
@@ -246,11 +252,13 @@ class Dyson:
             ch["target_c"] = p["target_c"]
         if "heat" in p:
             ch["heat"] = bool(p["heat"])
-        for k in ("night_mode", "brightness"):
-            if k in p:
-                ch[k] = int(p[k]) if k == "brightness" else p[k]
+        if "night_mode" in p:
+            ch["night_mode"] = p["night_mode"]
+        # Skip values the fan reported but won't accept back (set from the Dyson app).
+        if p.get("brightness") in BRIGHTNESS_LEVELS:
+            ch["brightness"] = int(p["brightness"])
         lo, hi = p.get("sweep_low"), p.get("sweep_high")
-        if lo is not None and hi is not None:
+        if lo is not None and hi is not None and (lo == hi or hi - lo >= 30):
             if lo == hi:
                 ch["aim"] = int(lo)
             else:
