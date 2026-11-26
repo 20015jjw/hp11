@@ -394,7 +394,7 @@ $('speed').oninput = () => { dragging = true; $('speedtxt').textContent = 'level
 $('speed').onchange = () => { dragging = false; set({speed: +$('speed').value}); };
 document.querySelectorAll('[data-k]').forEach(b => b.onclick = () => set({[b.dataset.k]: !s.state[b.dataset.k]}));
 function nudge(d) {
-  const [lo, hi] = useF ? [34, 99] : [1, 37];
+  const [lo, hi] = useF ? [34, 98] : [1, 37];   // the fan's 1-37 C range
   target = Math.min(hi, Math.max(lo, (target ?? Math.round(toUnit(s.state.target_c ?? 21))) + d));
   $('target').textContent = target + '°';
   clearTimeout(targetTimer);
@@ -424,7 +424,13 @@ function dayText(d) {
   return k === '0123456' ? 'Every day' : k === '01234' ? 'Weekdays' : k === '56' ? 'Weekends' : d.map(i => DAYS[i]).join(' ');
 }
 const clockText = t => new Date('1970-01-01T' + t).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+let cfgShown;
 function renderCfg() {
+  // Rebuild only when something it shows changed, so an open dropdown or a tap in
+  // progress isn't swapped out from under the finger by the 2 s state poll.
+  const key = JSON.stringify([cfg, useF, s && s.center]);
+  if (key === cfgShown) return;
+  cfgShown = key;
   const names = Object.keys(cfg.presets);
   $('presets').replaceChildren(...(names.length ? names.map(n => el('div', {className: 'row'},
     el('div', {className: 'label'}, n, el('small', {textContent: describe(cfg.presets[n])})),
