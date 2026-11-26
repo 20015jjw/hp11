@@ -116,10 +116,16 @@ def main():
     d = devs[0]
     secret = decrypt(d["creds"])["apPasswordHash"]
 
+    new = {"DYSON_HOST": host, "DYSON_SERIAL": d["serial"],
+           "DYSON_TYPE": d["type"], "DYSON_PASSWORD": secret}
+    keep = []  # other settings already in .env, e.g. DYSON_CENTER
+    if os.path.exists(ENV_PATH):
+        with open(ENV_PATH) as f:
+            keep = [ln.rstrip("\n") for ln in f if ln.split("=", 1)[0].strip() not in new]
     fd = os.open(ENV_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)  # also tighten a pre-existing file
     with os.fdopen(fd, "w") as f:
-        f.write(f"DYSON_HOST={host}\nDYSON_SERIAL={d['serial']}\n"
-                f"DYSON_TYPE={d['type']}\nDYSON_PASSWORD={secret}\n")
+        f.write("\n".join([f"{k}={v}" for k, v in new.items()] + keep) + "\n")
     print(f"Wrote {os.path.normpath(ENV_PATH)} (mode 600) for {d['serial']}.")
 
 
