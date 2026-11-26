@@ -48,7 +48,7 @@ For example, in a Proxmox LXC (adjust id, storage and template):
 Inside it, as root:
 
     apt-get update && apt-get install -y git
-    git clone https://github.com/<you>/hp11.git && cd hp11
+    git clone https://github.com/20015jjw/hp11.git && cd hp11
     python3 scripts/get_credentials.py      # or copy an existing .env here
     sh deploy/install.sh
 
